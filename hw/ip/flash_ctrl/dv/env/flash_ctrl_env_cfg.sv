@@ -15,6 +15,7 @@ class flash_ctrl_env_cfg extends cip_base_env_cfg #(
   // interface
   virtual flash_ctrl_if flash_ctrl_vif;
   virtual clk_rst_if clk_rst_vif_flash_ctrl_eflash_reg_block;
+  virtual pins_if #(NUM_MAX_INTERRUPTS) flash_ctrl_intr_vif;
 
   // knobs
   // ral.status[init_wip] status is set for the very first clock cycle right out of reset.

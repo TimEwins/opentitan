@@ -15,6 +15,7 @@ class flash_ctrl_env #(
   `uvm_component_param_utils(flash_ctrl_env#(CFG_T, SCOREBOARD_T, VIRTUAL_SEQUENCER_T))
 
   virtual flash_ctrl_if flash_ctrl_vif;
+  virtual pins_if       flash_ctrl_intr_vif;
 
   string hdl_path_root;
 
@@ -27,6 +28,12 @@ class flash_ctrl_env #(
             this, "", "flash_ctrl_vif", cfg.flash_ctrl_vif
         )) begin
       `uvm_fatal(`gfn, "failed to get flash_ctrl_vif from uvm_config_db")
+    end
+
+    if (!uvm_config_db#(virtual pins_if #(NUM_MAX_INTERRUPTS))::get(
+            this, "", "intr_vif", cfg.flash_ctrl_intr_vif
+        )) begin
+      `uvm_fatal(`gfn, "failed to get flash_ctrl_intr_vif from uvm_config_db")
     end
 
     // Retrieve the mem backdoor util instances.
@@ -55,4 +62,3 @@ class flash_ctrl_env #(
   endfunction
 
 endclass
-

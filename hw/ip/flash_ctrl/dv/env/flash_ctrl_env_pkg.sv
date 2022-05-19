@@ -30,6 +30,8 @@ package flash_ctrl_env_pkg;
   parameter uint FlashNumPages = flash_ctrl_pkg::NumBanks * flash_ctrl_pkg::PagesPerBank;
   parameter uint FlashSizeBytes         = FlashNumPages * flash_ctrl_pkg::WordsPerPage *
                                             flash_ctrl_pkg::DataWidth / 8;
+  
+  parameter uint NUM_FLASH_INTERRUPTS = 6;
 
   parameter uint ProgFifoDepth = 4;
   parameter uint ReadFifoDepth = 16;

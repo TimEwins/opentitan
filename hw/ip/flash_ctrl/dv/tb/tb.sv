@@ -83,10 +83,20 @@ module tb;
   wire [1:0] flash_test_mode_a;
   assign (pull1, pull0) flash_test_mode_a = 2'h3;
 
+  // Default Flash PHY Latency (can be manipulated from the test build_ops)
+  `define MODEL_ONLY_READ_LATENCY  1
+  `define MODEL_ONLY_PROG_LATENCY  50
+  `define MODEL_ONLY_ERASE_LATENCY 200 
+
   // dut
   flash_ctrl #(
     .ProgFifoDepth(ProgFifoDepth),
-    .RdFifoDepth(ReadFifoDepth)
+    .RdFifoDepth(ReadFifoDepth),
+    // TODO
+    .ModelOnlyReadLatency(`MODEL_ONLY_READ_LATENCY),
+    .ModelOnlyProgLatency(`MODEL_ONLY_PROG_LATENCY),
+    .ModelOnlyEraseLatency(`MODEL_ONLY_ERASE_LATENCY)    
+    
   ) dut (
     .clk_i          (clk),
     .rst_ni         (rst_n),
@@ -272,6 +282,12 @@ module tb;
     uvm_config_db#(virtual flash_ctrl_if)::set(null, "*.env", "flash_ctrl_vif", flash_ctrl_if);
     $timeformat(-12, 0, " ps", 12);
     run_test();
+  end
+
+  initial
+  begin
+    #1ns;
+    $display("MODEL_ONLY_READ_LATENCY = %0d", `MODEL_ONLY_READ_LATENCY);
   end
 
 endmodule

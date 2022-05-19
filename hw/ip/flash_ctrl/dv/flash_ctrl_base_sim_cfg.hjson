@@ -32,7 +32,8 @@
                 "{proj_root}/hw/dv/tools/dvsim/tests/sec_cm_tests.hjson",
                 "{proj_root}/hw/dv/tools/dvsim/tests/stress_tests.hjson"],
 
-  en_build_modes: ["{tool}_crypto_dpi_prince_build_opts"]
+  en_build_modes: ["{tool}_crypto_dpi_prince_build_opts", "flash_ctrl_interrupts"]
+  
   // Flash references pwrmgr directly, need to reference the top version
   overrides: [
     {
@@ -42,6 +43,13 @@
     {
       name: "timescale"
       value: "1ns/100ps"
+    }
+  ]
+
+  build_modes: [
+    {
+      name: flash_ctrl_interrupts
+      build_opts: ["+define+MODEL_ONLY_READ_LATENCY=50"]
     }
   ]
 
@@ -162,6 +170,12 @@
       uvm_test_seq: flash_ctrl_mid_op_rst_vseq
       reseed: 5
     }
+      name: flash_ctrl_interrupts
+      uvm_test_seq: flash_ctrl_interrupts_vseq
+      run_opts: ["+zero_delays=1"]
+      reseed: 100
+    }
+
   ]
 
   // List of regressions.

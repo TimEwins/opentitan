@@ -17,6 +17,8 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
   logic [KeyWidth-1:0] otp_data_key;
   logic [KeyWidth-1:0] otp_data_rand_key;
 
+  bit [NUM_FLASH_INTERRUPTS-1:0] csr_intr_test;
+
   // flash ctrl configuration settings.
 
   constraint num_trans_c {num_trans inside {[1 : cfg.seq_cfg.max_num_trans]};}
@@ -211,20 +213,51 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
     csr_wr(.ptr(ral.fifo_rst), .value(reset));
   endtask : flash_ctrl_fifo_reset
 
-  // Wait for flash_ctrl op to finish.
-  virtual task wait_flash_op_done(
-      bit clear_op_status = 1'b1, time timeout_ns = 10_000_000
-  );  // Added because mass(bank) erase is longer then default timeout.
+  // Wait for flash_ctrl op to finish (polled of interrupt)
+  virtual task wait_flash_op_done(bit clear_op_status = 1'b1, time timeout_ns = 10_000_000);
+    // Timeout Added because mass(bank) erase is longer then a default timeout.
+    
+    // Local Variables
     uvm_reg_data_t data;
     bit done;
-    `DV_SPINWAIT(do begin
+    bit [NUM_FLASH_INTERRUPTS-1:0] csr_intr_enable;
+           
+    // Get INTR_ENABLE Register Value via the Backdoor
+    csr_rd(.ptr(ral.intr_enable), .value(csr_intr_enable), .backdoor(1));
+        
+    if (csr_intr_enable[FlashCtrlIntrOpDone] == 0) begin  // 'op_done' Interrupt Disabled
+      // Use Polling
+      `uvm_info(`gfn, "Use Polling (op_done)", UVM_LOW)
+      `DV_SPINWAIT(do begin
         csr_rd(.ptr(ral.op_status), .value(data));
         done = get_field_val(ral.op_status.done, data);
       end while (done == 1'b0);, "wait_flash_op_done timeout occurred!", timeout_ns)
-    if (clear_op_status) begin
-      data = get_csr_val_with_updated_field(ral.op_status.done, data, 0);
-      csr_wr(.ptr(ral.op_status), .value(data));
-    end
+      if (clear_op_status) begin
+        data = get_csr_val_with_updated_field(ral.op_status.done, data, 0);
+        csr_wr(.ptr(ral.op_status), .value(data));
+      end
+    end else begin  // 'op_done' Interrupt Enabled    
+      `uvm_info(`gfn, "Use Interrupt (op_done)", UVM_LOW)
+      fork                                                                                                 
+        begin                                                                                       
+          `uvm_info(`gfn, "Waiting for Interrupt (op_done)", UVM_LOW)                                         
+          @(posedge cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrOpDone]);                                       
+          csr_rd(.ptr(ral.intr_state), .value(data));                                                                   
+          if (data[FlashCtrlIntrOpDone] == 1) begin                                                                                     
+            `uvm_info(`gfn, "Interrupt Seen, 'op_done' Status Returned 1, PASS", UVM_INFO)                                
+            csr_wr(.ptr(ral.intr_state), .value(data));  // Acknowledge (Clear) Interrupt (op_done)                
+          end 
+          else                                                                                      
+            `uvm_error(`gfn, "Interrupt Seen 'op_done' Status Returned 0, FAIL")                         
+        end                                                                                                 
+        begin                                                                                       
+          #(timeout_ns);                                                                                     
+          `uvm_fatal(`gfn, "Timeout - Timed Out While Waiting for 'op_done' Interrupt, FAIL")  
+        end                                                                                               
+      join_any                                                                                      
+      disable fork;                                                                                     
+    end  
+              
   endtask : wait_flash_op_done
 
   // Wait for flash_ctrl op to finish with error.
