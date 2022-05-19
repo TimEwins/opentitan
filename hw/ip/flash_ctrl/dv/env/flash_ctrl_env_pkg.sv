@@ -33,6 +33,7 @@ package flash_ctrl_env_pkg;
   
   parameter uint NUM_FLASH_INTERRUPTS = 6;
 
+  // Flash Fifo Depths for Program and Read (Different)
   parameter uint ProgFifoDepth = 4;
   parameter uint ReadFifoDepth = 16;
 

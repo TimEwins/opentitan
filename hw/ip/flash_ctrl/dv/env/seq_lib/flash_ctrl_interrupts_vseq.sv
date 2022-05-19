@@ -42,6 +42,10 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
   localparam uint RdLvlMin = 4;
   localparam uint RdLvlMax = flash_ctrl_env_pkg::ReadFifoDepth;
 
+  // Program Fifo Levels
+  localparam uint ProgLvlMin = 2;
+  localparam uint ProgLvlMax = 4;  // TODO Magic Number Max
+
   // Constraint for Bank.
   constraint bank_c {
     bank inside {[0 : flash_ctrl_pkg::NumBanks - 1]};
@@ -88,8 +92,7 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
 
     flash_op.num_words inside {[10 : FlashNumBusWords - flash_op.addr[TL_AW-1:TL_SZW]]};
     flash_op.num_words <= cfg.seq_cfg.op_max_words;
-  //flash_op.num_words < FlashPgmRes - flash_op.addr[TL_SZW+:FlashPgmResWidth];  // TODO: Potential Issue
-    flash_op.num_words < cfg.seq_cfg.op_max_words - flash_op.addr[TL_SZW+:FlashPgmResWidth];
+    flash_op.num_words < FlashPgmRes - flash_op.addr[TL_SZW+:FlashPgmResWidth];  
   }
 
   // Flash ctrl operation data queue - used for programing or reading the flash.
@@ -197,7 +200,7 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
   virtual function void configure_vseq();
 
     // Do no more than 16 words per op.
-    cfg.seq_cfg.op_max_words = 32;  // TODO
+    cfg.seq_cfg.op_max_words = 16;
  
     // Enable NO memory protection regions
     cfg.seq_cfg.num_en_mp_regions = 0;
@@ -218,22 +221,28 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
   
   virtual task body();
         
-    `uvm_info(`gfn, "INTERRUPT TESTS", UVM_LOW)
+    `uvm_info(`gfn, "HW INTERRUPT TESTS", UVM_LOW)
 
     init_flash_regions();
     display_mp_region_info();
 
-//  fork
-//    test_interrupt_test_reg(); 
-//    interrupt_checker(csr_intr_test);
-//  join_any
-//  disable fork;
+`ifdef WORKING
+    // Test 1 : Interrupt Test Register Test
+    fork
+      test_interrupt_test_reg(); 
+      interrupt_checker(csr_intr_test);
+    join_any
+    disable fork;
 
-//  test_op_done_intr();   
+    // Test 2 : Erase, Program and Read, Using op_done Interrupt
+    test_interrupt_op_done();   
 
-    test_fifo_rd_interrupts();      
+    // Test 3 : Flash Read Using fifo_lvl and fifo_full interrupts and Registers
+    test_interrupt_read();      
+`endif
   
-//  test_fifo_prog_interrupts();
+    // Test 4 : WIP
+    test_interrupt_prog();
 
   endtask : body
 
@@ -309,7 +318,7 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
     // -- Test : Interrupt Test Register Feature (INTR_TEST) --
     // --------------------------------------------------------
 
-    `uvm_info(`gfn, "Test : Interrupt Test Register Feature", UVM_LOW)
+    `uvm_info(`gfn, "TEST : Interrupt Test Register Feature", UVM_LOW)
 
     // Note: Register INTR_ENABLE Controls the IRQ Output, Not the Internal Status Flag
 
@@ -393,7 +402,7 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
                                                                                                                                        
       // Model and Check Behaviour                                                                                                     
       foreach (csr_intr_state[i]) begin                                                                                                
-        bit_e    = flash_ctrl_intr_e'(i);                                                                                              
+        bit_e = flash_ctrl_intr_e'(i);                                                                                              
         bit_name = bit_e.name();                                                                                                       
         if (cfg.flash_ctrl_intr_vif.pins[i] == 1) begin                                                                                
           if (((csr_intr_test[i]==0) && (csr_intr_state[i]== 1)) || ((csr_intr_test[i]==1) && (csr_intr_state[i]==0)))            
@@ -409,11 +418,11 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
       
   endtask : interrupt_checker
 
-  // ------------------------------
-  // -- Task : test_op_done_intr --
-  // ------------------------------
+  // -----------------------------------
+  // -- Task : test_interrupt_op_done --
+  // -----------------------------------
 
-  virtual task test_op_done_intr();
+  virtual task test_interrupt_op_done();
 
     // Local Variables
     uvm_reg_data_t data;
@@ -423,11 +432,13 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
     // -- Test : Flash Erase, Program and Read using 'op_done' Interrupt instead of Polling --
     // ---------------------------------------------------------------------------------------
 
-    `uvm_info(`gfn, "Test : Flash Erase, Program and Read using 'op_done' Interrupt instead of Polling", UVM_LOW)
+    `uvm_info(`gfn, "TEST : Flash Erase, Program and Read using 'op_done' Interrupt instead of Polling", UVM_LOW)
   
     // Enable INTR : op_done          
     data = get_csr_val_with_updated_field(ral.intr_enable.op_done, data, 1);  
     csr_wr(.ptr(ral.intr_enable), .value(data));
+
+    `uvm_info(`gfn, $sformatf("intr_enable : %06b", data), UVM_LOW)
                     
     // Iterate
     num_iter = $urandom_range(INNER_MIN, INNER_MAX);
@@ -449,7 +460,6 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
 
       // Start Controller Read, Program or Erase
       unique case (flash_op.op)
-
         FlashOpRead :
         begin
           flash_op_data.delete();
@@ -459,7 +469,6 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
           `uvm_info(`gfn, $sformatf("Read Data : %0p", flash_op_data), UVM_LOW)
           cfg.flash_mem_bkdr_read_check(flash_op, flash_op_data);
         end
-
         FlashOpProgram :
         begin
           data_q_t exp_data;
@@ -470,7 +479,6 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
           `uvm_info(`gfn, $sformatf("Program Data : %0p", flash_op_data), UVM_LOW)
           cfg.flash_mem_bkdr_read_check(flash_op, flash_op_data);
         end
-
         FlashOpErase :
         begin
           data_q_t exp_data;
@@ -480,9 +488,7 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
           `uvm_info(`gfn, "Erase Data", UVM_LOW)
           cfg.flash_mem_bkdr_erase_check(flash_op, exp_data);      
         end
-
         default : `uvm_fatal(`gfn, "Flash Operation Unrecognised, FAIL")
-
       endcase
 
       // If the 'Info' Partition is Selected, Turn Off the HW Access Signals
@@ -491,17 +497,17 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
 
     end
 
-  endtask : test_op_done_intr
+  endtask : test_interrupt_op_done
 
-  // ------------------------------------
-  // -- Task : test_fifo_rd_interrupts --
-  // ------------------------------------
+  // --------------------------------
+  // -- Task : test_interrupt_read --
+  // --------------------------------
 
-  virtual task test_fifo_rd_interrupts();
+  virtual task test_interrupt_read();
 
     // NOTE : Constraints
     // 1) Data Partiions Only
-    // 2) FIFO LVL Restriction 4 - 16 words
+    // 2) fifo_lvl.rd Restriction 4 - 16 words
     // 3) num_words Restriction 8 - 64 words
 
     // Local Variables
@@ -520,43 +526,35 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
     // -- Test : Verify READ Interrupts --
     // -----------------------------------
 
-    `uvm_info(`gfn, "Test : Verify READ Interrupts", UVM_LOW)
+    `uvm_info(`gfn, "TEST : Verify READ Interrupts", UVM_LOW)
 
     // OUTER LOOP
 
     num_outer = $urandom_range(OUTER_MIN, OUTER_MAX);
     for (int i = 0; i < num_outer; i++) begin
 
-      // Decide if test will use the 'rd_full' or the 'rd_lvl' Interrupt
+      // Decide if test will use the 'rd_full' or the 'rd_lvl' Interrupt, this iteration
       randcase
         1 : rd_intr_opt = 0;  // 'rd_full'
         2 : rd_intr_opt = 1;  // 'rd_lvl'
       endcase
 
       // Enable Desired Interrupts
-      `uvm_info("DEBUG", "--> Clearing intr_enable", UVM_LOW)
-      csr_wr(.ptr(ral.intr_enable), .value(0));
+      data = 0;
+      csr_wr(.ptr(ral.intr_enable), .value(data));  // Disable ALL Interrupts
       if (rd_intr_opt == 0) begin
-        `uvm_info(`gfn, "Test Chose : Use 'rd_full' Interrupt", UVM_LOW)
-        
-        data =        get_csr_val_with_updated_field(ral.intr_enable.rd_full, data, 1);  // rd_full
-        data = data | get_csr_val_with_updated_field(ral.intr_enable.rd_lvl, data,  0);  // rd_lvl
-      
+        `uvm_info(`gfn, "Test Selected : Use 'rd_full' Interrupt", UVM_LOW)
+        data = data | get_csr_val_with_updated_field(ral.intr_enable.rd_full, data, 1);  // rd_full
       end else begin
-        `uvm_info(`gfn, "Test Chose : Use 'rd_lvl' Interrupt", UVM_LOW)
+        `uvm_info(`gfn, "Test Selected : Use 'rd_lvl' Interrupt", UVM_LOW)
         rd_lvl = $urandom_range(RdLvlMin, RdLvlMax);
-        `uvm_info(`gfn, $sformatf("Test Chose : Read Level : %0d", rd_lvl), UVM_LOW)
+        `uvm_info(`gfn, $sformatf("Test Selected : Read Level : %0d", rd_lvl), UVM_LOW)
         csr_wr(.ptr(ral.fifo_lvl.rd), .value(rd_lvl));
         csr_rd_check(.ptr(ral.fifo_lvl.rd), .compare_value(rd_lvl));
-        
-        data =        get_csr_val_with_updated_field(ral.intr_enable.rd_lvl, data,  1);  // rd_lvl
-        data = data | get_csr_val_with_updated_field(ral.intr_enable.rd_full, data, 0);  // rd_full
-      
+        data = data | get_csr_val_with_updated_field(ral.intr_enable.rd_lvl, data, 1);  // rd_lvl
       end
       data = data | get_csr_val_with_updated_field(ral.intr_enable.op_done, data, 1);  // op_done
-
-      `uvm_info("DEBUG", $sformatf("--> Writing intr_enable : %b", data), UVM_LOW)
-
+      `uvm_info(`gfn, $sformatf("intr_enable : %06b", data), UVM_MEDIUM)
       csr_wr(.ptr(ral.intr_enable), .value(data));
 
       // INNER LOOP
@@ -572,7 +570,7 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
                                              flash_op.partition == FlashPartData;
                                              flash_op.addr      == 0;)
 
-        // Select a Number of Words to Read - TODO
+        // Select a Number of Words to Read - TODO ATM
         flash_op.num_words = $urandom_range(8, 64);
         num_words_rem = flash_op.num_words;
 
@@ -591,8 +589,8 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
         // Start Op
         flash_ctrl_start_op(flash_op);
         done = 0;
-        while (done == 0)
-        begin
+        while (done == 0) begin
+          
           `uvm_info(`gfn, "Waiting For 'rd_full', 'rd_lvl' or 'op_done' Interrupt", UVM_LOW)
           fork
             @(posedge cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrOpDone]);
@@ -602,12 +600,12 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
               else
                 @(posedge cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrRdLvl]);
             end
-            wait_intr_timeout(1ms, "Interrupts : 'op_done', 'rd_full', rd'_lvl'");
+            wait_intr_timeout(1ms, "Interrupts : 'op_done', 'rd_full', 'rd_lvl'");
           join_any
           disable fork;
 
           // Process Interrupt
-          if (cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrRdLvl]) begin  // Interrupt 'rd_lvl'
+          priority if (cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrRdLvl]) begin  // Interrupt 'rd_lvl'
             process_rd_intr(.intr_str("rd_lvl"), .reg_ptr(ral.intr_state.rd_lvl),
                             .num_words_rem(num_words_rem), .pred_rd_lvl(rd_lvl),
                             .idx(idx));
@@ -636,14 +634,212 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
         // If the 'Info' Partition is Selected, Turn Off the HW Access Signals
         en_sw_rw_part_info (flash_op, lc_ctrl_pkg::Off);
   
-        #1us;  // TODO REMOVE
-
       end
 
     end
 
-  endtask : test_fifo_rd_interrupts
+  endtask : test_interrupt_read
+
+  // -----------
+  // -- W I P --
+  // -----------
+
+  // --------------------------------
+  // -- Task : test_interrupt_prog --
+  // --------------------------------
+
+  virtual task test_interrupt_prog();
+
+    // NOTE : Constraints
+    // 1) Data Partiions Only
+    // 2) fifo_lvl.prog Restriction 4 - 16 words
+    // 3) num_words Restriction 8 - 64 words
+
+    // Local Variables
+    uint           fifo_max_prog_depth = flash_ctrl_env_pkg::ProgFifoDepth;
+    uint           idx;
+    uvm_reg_data_t data;
+    uint           curr_fifo_lvl;
+    uint           num_words_rem;
+    uint           prog_lvl;
+    bit            done;
+    bit            prog_intr_opt;
+    uint           num_outer;
+    uint           num_inner;
+    data_q_t       flash_op_data_cpy;
+
+    // --------------------------------------
+    // -- Test : Verify PROGRAM Interrupts --
+    // --------------------------------------
+
+    `uvm_info(`gfn, "TEST : Verify PROGRAM Interrupts", UVM_LOW)
+
+    // OUTER LOOP
+
+    //num_outer = $urandom_range(OUTER_MIN, OUTER_MAX);
+    num_outer = 1;
+    for (int i = 0; i < num_outer; i++) begin
+
+      // Decide if test will use the 'prog_empty' or the 'prog_lvl' Interrupt, this iteration
+      randcase
+        1 : prog_intr_opt = 0;  // 'prog_empty'
+        0 : prog_intr_opt = 1;  // 'prog_lvl'
+      endcase
+
+      // Enable Desired Interrupts
+      data = 0;
+      csr_wr(.ptr(ral.intr_enable), .value(data));  // Disable ALL Interrupts
+      if (prog_intr_opt == 0) begin      
+        `uvm_info(`gfn, "Test Selected : Use 'prog_empty' Interrupt", UVM_LOW)
+        data = data | get_csr_val_with_updated_field(ral.intr_enable.prog_empty, data, 1);  // prog_empty      
+      end else begin
+//       `uvm_info(`gfn, "Test Selected : Use 'prog_lvl' Interrupt", UVM_LOW)
+//       prog_lvl = $urandom_range(ProgLvlMin, ProgLvlMax);
+//       `uvm_info(`gfn, $sformatf("Test Selected : Program Level : %0d", prog_lvl), UVM_LOW)
+//       csr_wr(.ptr(ral.fifo_lvl.prog), .value(prog_lvl));
+//       csr_rd_check(.ptr(ral.fifo_lvl.prog), .compare_value(prog_lvl));
+//       data = data | get_csr_val_with_updated_field(ral.intr_enable.prog_lvl, data, 1);  // rd_lvl
+      end
+      data = data | get_csr_val_with_updated_field(ral.intr_enable.op_done, data, 1);  // op_done
+      `uvm_info(`gfn, $sformatf("intr_enable : %06b", data), UVM_MEDIUM)
+      csr_wr(.ptr(ral.intr_enable), .value(data));
+
+      // INNER LOOP
+
+      num_inner = 3;
+      //num_inner = $urandom_range(INNER_MIN, INNER_MAX);
+      for (int j = 0; j < num_inner; j++) begin
+
+        #2us;
+
+        `uvm_info(`gfn, $sformatf("Iteration : %0d.%0d / %0d.%0d", i+1, j+1,
+                          num_outer, num_inner), UVM_LOW)
+
+        // Randomize the Members of the Class (Using Flash Read) -- TODO : Just Data Partition ATM
+        `DV_CHECK_RANDOMIZE_WITH_FATAL(this, flash_op.op        == FlashOpProgram;
+                                             flash_op.partition == FlashPartData;
+                                             flash_op.addr      == 0;)
+
+        // Select a Number of Words to Read - TODO ATM
+        //flash_op.num_words = $urandom_range(8, 64);        
+        
+        flash_op.num_words = j+15;                     
+//      flash_op.num_words = 16;                             
+        num_words_rem = flash_op.num_words;
+
+        `uvm_info(`gfn, $sformatf("Flash Op : %0p", flash_op), UVM_LOW)
+
+        // If the 'Info' Partition is Selected, Turn On the HW Access Signals
+        en_sw_rw_part_info(flash_op, lc_ctrl_pkg::On);
+
+        // Initialise Flash Content
+        init_flash_content(flash_op);
+
+        // Initialize
+        foreach (flash_op.num_words[i]) begin
+          flash_op_data.push_back($urandom);
+        end
+        flash_op_data_cpy = flash_op_data;
+        idx = 0;
+    
+        #500ns;
+
+        // Start Op
+        flash_ctrl_start_op(flash_op);        
+
+        #500ns;
  
+        done = 0; 
+        while (done == 0)
+        begin
+ 
+          // Write to FIFO
+          if (num_words_rem <= 4)
+          begin
+            prog_fifo_data(num_words_rem, flash_op_data, idx);        
+          end
+          else
+          begin
+            prog_fifo_data(4, flash_op_data, idx);        
+            num_words_rem -= 4;  // fifo size/prog window
+          end   
+ 
+         `uvm_info(`gfn, "Waiting For 'prog_empty', 'prog_lvl' or 'op_done' Interrupt", UVM_LOW)
+          fork
+            @(posedge cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrOpDone]);
+            begin
+              if (prog_intr_opt == 0)
+                @(posedge cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrProgEmpty]);
+              else
+                @(posedge cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrProgLvl]);
+            end
+            wait_intr_timeout(100ms, "Interrupts : 'op_done', 'prog_empty', 'prog_lvl'");
+//          wait_intr_timeout(1ms, "Interrupts : 'op_done', 'prog_empty', 'prog_lvl'");
+          join_any
+          disable fork;
+ 
+          // Process Interrupt
+          priority if (cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrProgLvl]) 
+          begin  // Interrupt 'prog_lvl'
+            // TODO
+            `uvm_fatal("DEBUG", "--> prog_lvl Not Implemented Yet")
+
+            `uvm_info(`gfn, $sformatf("Seen Interrupt : %s", "prog_empty"), UVM_LOW)                                                                                                                                                                                  
+            `uvm_info(`gfn, $sformatf("Check Status : %s", "prog_empty"), UVM_LOW)                                                  
+            csr_rd_check(.ptr(ral.intr_state.prog_empty), .compare_value(1));                                                
+
+            `uvm_info(`gfn, $sformatf("Clear Status : %s", "prog_empty"), UVM_LOW)                 
+            csr_wr(.ptr(ral.intr_state.prog_empty), .value(1));                                
+
+          end 
+          else 
+          begin
+         
+            if (cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrProgEmpty]) 
+            begin  // Interrupt 'prog_empty'
+
+              `uvm_info(`gfn, $sformatf("Seen Interrupt : %s", "prog_empty"), UVM_LOW)                                                                                                                                                                                
+              `uvm_info(`gfn, $sformatf("Check Status : %s", "prog_empty"), UVM_LOW)                                                
+              csr_rd_check(.ptr(ral.intr_state.prog_empty), .compare_value(1));                                              
+              `uvm_info(`gfn, $sformatf("Clear Status : %s", "prog_empty"), UVM_LOW)               
+              csr_wr(.ptr(ral.intr_state.prog_empty), .value(1));                              
+            
+            end 
+            else 
+            begin
+            
+              if (cfg.flash_ctrl_intr_vif.pins[FlashCtrlIntrOpDone]) 
+              begin  // Interrupt 'op_done'
+
+                `uvm_info(`gfn, $sformatf("Seen Interrupt : %s", "op_done"), UVM_LOW)                                                                                                                                                                                
+                `uvm_info(`gfn, $sformatf("Check Status : %s", "op_done"), UVM_LOW)                                                
+                csr_rd_check(.ptr(ral.intr_state.op_done), .compare_value(1));                                              
+                `uvm_info(`gfn, $sformatf("Clear Status : %s", "op_done"), UVM_LOW)               
+                csr_wr(.ptr(ral.intr_state.op_done), .value(1));                              
+
+                done = 1;  // Complete Program Operation
+              end 
+              else
+              begin
+                `uvm_fatal(`gfn, "Interrupt Error Occurred - FAIL")
+              end
+            end
+          end
+
+        end
+ 
+        `uvm_info(`gfn, "CHECK DATA INTEGRITY", UVM_LOW)
+        cfg.flash_mem_bkdr_read_check(flash_op, flash_op_data_cpy);  // Check Data Integrity
+
+        // If the 'Info' Partition is Selected, Turn Off the HW Access Signals
+        en_sw_rw_part_info (flash_op, lc_ctrl_pkg::Off);
+  
+      end
+
+    end
+
+  endtask : test_interrupt_prog
+
   // ------------------------------
   // -- Task : wait_intr_timeout --
   // ------------------------------
@@ -682,30 +878,6 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
     end
   endfunction :  display_mp_region_info
 
-  // ---------------------------
-  // -- Task : read_fifo_data --
-  // ---------------------------
-  
-  virtual task read_fifo_data(input uint num_words, ref uint idx);
-    uvm_reg_data_t data;
-    for (int i = 0; i < num_words; i++) begin
-      mem_rd(.ptr(ral.rd_fifo), .offset(0), .data(data));
-      flash_op_data.push_back(data);      
-      `uvm_info(`gfn, $sformatf("Word[%0d] : Read FIFO : 0x%0x", idx++, data), UVM_LOW) 
-    end
-  endtask : read_fifo_data
-
-  // ---------------------------
-  // -- Task : prog_fifo_data --
-  // ---------------------------
-
-  virtual task prog_fifo_data(input uint num_words, input data_q_t data, ref uint idx);        
-    for (int i = 0; i < num_words; i++) begin
-      mem_wr(.ptr(ral.prog_fifo), .offset(0), .data(data[i]));
-      `uvm_info(`gfn, $sformatf("Word[%0d] : Program FIFO : 0x%0x", idx++, data[i]), UVM_LOW) 
-    end 
-  endtask : prog_fifo_data
-
   // ----------------------------
   // -- Task : process_rd_intr --
   // ----------------------------
@@ -723,16 +895,12 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
     // Predict Status
     ral.curr_fifo_lvl.rd.predict(pred_rd_lvl);                                                                             
 
-`uvm_info("DEBUG", $sformatf("--> Predicted Rd Level : %0d", pred_rd_lvl), UVM_LOW)
-
     if (intr_str inside {"rd_lvl", "rd_full"})  // Track Remaining Words
       num_words_rem -= pred_rd_lvl;                                      
 
-    csr_rd(.ptr(ral.curr_fifo_lvl.rd), .value(curr_fifo_lvl)); 
-
-`uvm_info("DEBUG", $sformatf("--> Curr Fifo Level : %0d", curr_fifo_lvl), UVM_LOW)    
-                                                              
-    read_fifo_data(curr_fifo_lvl, idx);  // Read Data from FIFO                                                          
+    // Read curr_fifo_lvl and read data from the fifo
+    csr_rd(.ptr(ral.curr_fifo_lvl.rd), .value(curr_fifo_lvl));                                                               
+    read_fifo_data(curr_fifo_lvl, idx);
 
     `uvm_info(`gfn, $sformatf("Clear Status : %s", intr_str), UVM_LOW)                
     csr_wr(.ptr(reg_ptr), .value(1));                               
@@ -751,6 +919,35 @@ class flash_ctrl_interrupts_vseq extends flash_ctrl_base_vseq;
     end else begin
       cfg.flash_mem_bkdr_write(.flash_op(flash_op), .scheme(FlashMemInitRandomize));
     end
- endtask : init_flash_content
+  endtask : init_flash_content
+
+  // ---------------------------
+  // -- Task : read_fifo_data --
+  // ---------------------------
+  
+  virtual task read_fifo_data(input uint num_words, ref uint idx);
+    uvm_reg_data_t data;
+    for (int i = 0; i < num_words; i++) begin
+      mem_rd(.ptr(ral.rd_fifo), .offset(0), .data(data));
+      flash_op_data.push_back(data);      
+      `uvm_info(`gfn, $sformatf("Word[%0d] : Read FIFO : 0x%0x", idx++, data), UVM_LOW) 
+    end
+  endtask : read_fifo_data
+
+  // ---------------------------
+  // -- Task : prog_fifo_data --
+  // ---------------------------
+
+  virtual task prog_fifo_data(input uint num_words, ref data_q_t data_q, ref uint idx);        
+    uvm_reg_data_t data;
+    
+    for (int i = 0; i < num_words; i++) begin
+      data = data_q.pop_front();
+             
+      mem_wr(.ptr(ral.prog_fifo), .offset(0), .data(data));
+      `uvm_info(`gfn, $sformatf("Word[%0d] : Program FIFO : 0x%0x", idx++, data), UVM_LOW) 
+    end 
+  
+  endtask : prog_fifo_data
 
 endclass : flash_ctrl_interrupts_vseq

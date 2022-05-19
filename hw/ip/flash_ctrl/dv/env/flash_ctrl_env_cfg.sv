@@ -260,7 +260,7 @@ class flash_ctrl_env_cfg extends cip_base_env_cfg #(
     for (int i = 0; i < flash_op.num_words; i++) begin
       data[i] = mem_bkdr_util_h[flash_op.partition][addr_attrs.bank].read32(addr_attrs.bank_addr);
       `uvm_info(`gfn, $sformatf(
-                "flash_mem_bkdr_read: partition = %s , {%s} = 0x%0h",
+                "flash_mem_bkdr_read: partition = %s, {%s} = 0x%0h",
                 flash_op.partition.name(),
                 addr_attrs.sprint(),
                 data[i]

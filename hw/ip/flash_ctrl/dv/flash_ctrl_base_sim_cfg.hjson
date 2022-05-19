@@ -49,7 +49,9 @@
   build_modes: [
     {
       name: flash_ctrl_interrupts
-      build_opts: ["+define+MODEL_ONLY_READ_LATENCY=50"]
+      build_opts: ["+define+MODEL_ONLY_READ_LATENCY=50",      // Default 1
+                   "+define+MODEL_ONLY_PROG_LATENCY=2500",    // Default 50
+                   "+define+MODEL_ONLY_ERASE_LATENCY=10000"]  // Default 200
     }
   ]
 
@@ -170,10 +172,11 @@
       uvm_test_seq: flash_ctrl_mid_op_rst_vseq
       reseed: 5
     }
+    {
       name: flash_ctrl_interrupts
       uvm_test_seq: flash_ctrl_interrupts_vseq
       run_opts: ["+zero_delays=1"]
-      reseed: 100
+      reseed: 10
     }
 
   ]
